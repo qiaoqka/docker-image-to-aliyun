@@ -13,3 +13,5 @@ xhofe/alist:v3.35.0
 xhofe/alist:latest
 
 # linux/arm/v7
+
+--platform=linux/arm64 continuumio/miniconda3:24.9.2-0

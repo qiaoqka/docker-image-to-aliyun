@@ -16,3 +16,5 @@ xhofe/alist:latest
 
 --platform=linux/arm64 continuumio/miniconda3:24.9.2-0
 --platform=linux/arm/v7 python:3.9.23-slim-bullseye
+
+oven/bun:1.2.19-alpine

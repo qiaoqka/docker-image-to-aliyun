@@ -11,6 +11,7 @@ python:alpine3.19
 
 xhofe/alist:v3.35.0
 xhofe/alist:latest
+mysql:5.7.44
 
 # linux/arm/v7
 

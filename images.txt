@@ -13,6 +13,7 @@ xhofe/alist:v3.35.0
 xhofe/alist:latest
 mysql:5.7.44
 nginx:1.25.5
+php:7.4-fpm
 
 # linux/arm/v7
 

@@ -21,3 +21,5 @@ php:7.4-fpm
 --platform=linux/arm/v7 python:3.9.23-slim-bullseye
 
 oven/bun:1.2.19-alpine
+#artifacts.plane.so/makeplane/plane-frontend
+makeplane/plane-frontend

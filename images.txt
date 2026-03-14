@@ -33,6 +33,9 @@ xhofe/alist:latest
 p3terx/aria2-pro
 p3terx/ariang
 
+# 工具
+portainer/portainer-ce:2.29.0
+
 # 项目管理 开源软件 plane
 #artifacts.plane.so/makeplane/plane-frontend
 makeplane/plane-frontend:v1.2.3

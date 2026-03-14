@@ -14,12 +14,21 @@ xhofe/alist:latest
 mysql:5.7.44
 nginx:1.25.5
 php:7.4-fpm
-
+postgres:15.7-alpine
 # linux/arm/v7
 
 --platform=linux/arm64 continuumio/miniconda3:24.9.2-0
 --platform=linux/arm/v7 python:3.9.23-slim-bullseye
 
 oven/bun:1.2.19-alpine
+# 项目管理 开源软件 plane
 #artifacts.plane.so/makeplane/plane-frontend
-makeplane/plane-frontend
+makeplane/plane-frontend:v1.2.3
+makeplane/plane-space:v1.2.3
+makeplane/plane-admin:v1.2.3
+makeplane/plane-live:v1.2.3
+makeplane/plane-backend:v1.2.3
+makeplane/plane-proxy:v1.2.3
+valkey/valkey:7.2.11-alpine
+rabbitmq:3.13.6-management-alpine
+minio/minio

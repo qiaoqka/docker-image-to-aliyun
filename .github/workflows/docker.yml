@@ -55,17 +55,47 @@ jobs:
     - name: Docker Setup Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Install jq
+      run: sudo apt-get update && sudo apt-get install -y jq
+
     - name: Build and push image Aliyun
       run: |
         echo "$ALIYUN_REGISTRY_PASSWORD" | docker login -u "$ALIYUN_REGISTRY_USER" --password-stdin "$ALIYUN_REGISTRY"
 
-        # 检查镜像是否已存在于阿里云
-        check_image_exists() {
-            local image_tag="$1"
-            if docker manifest inspect "$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/$image_tag" > /dev/null 2>&1; then
-                return 0
+        # 获取镜像 digest
+        get_image_digest() {
+            local image="$1"
+            docker manifest inspect "$image" 2>/dev/null | jq -r '.config.digest' 2>/dev/null || echo ""
+        }
+
+        # 检查镜像是否需要更新（比较 Docker Hub 和阿里云的 digest）
+        check_need_update() {
+            local source_image="$1"
+            local target_image="$2"
+
+            # 获取源镜像（Docker Hub）的 digest
+            local source_digest=$(get_image_digest "$source_image")
+            if [ -z "$source_digest" ]; then
+                echo "[WARN] 无法获取源镜像 digest: $source_image"
+                return 0  # 无法获取时默认需要更新
+            fi
+
+            # 获取目标镜像（阿里云）的 digest
+            local target_digest=$(get_image_digest "$target_image")
+            if [ -z "$target_digest" ]; then
+                echo "[INFO] 阿里云镜像不存在: $target_image"
+                return 0  # 阿里云不存在，需要更新
+            fi
+
+            # 比较 digest
+            if [ "$source_digest" != "$target_digest" ]; then
+                echo "[INFO] digest 不同，需要更新"
+                echo "  Docker Hub: $source_digest"
+                echo "  阿里云:     $target_digest"
+                return 0  # 需要更新
             else
-                return 1
+                echo "[INFO] digest 相同，无需更新"
+                return 1  # 不需要更新
             fi
         }
 
@@ -157,9 +187,9 @@ jobs:
             fi
             new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/${name_space_prefix}${image_name}:${new_tag}"
 
-            # 检查镜像是否已存在
-            if check_image_exists "${name_space_prefix}${image_name}:${new_tag}"; then
-                echo "[SKIP] 镜像已存在: $new_image"
+            # 检查是否需要更新（比较 Docker Hub 和阿里云的 digest）
+            if ! check_need_update "$image" "$new_image"; then
+                echo "[SKIP] 镜像已是最新: $new_image"
                 continue
             fi
 

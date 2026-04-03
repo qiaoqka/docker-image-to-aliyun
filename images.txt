@@ -15,6 +15,7 @@
 oven/bun:1.2.19-alpine
 mysql:5.7.44
 postgres:15.7-alpine
+postgres:18-alpine
 nginx:1.25.5
 alpine
 python:alpine3.19
@@ -47,3 +48,6 @@ makeplane/plane-proxy:v1.2.3
 valkey/valkey:7.2.11-alpine
 rabbitmq:3.13.6-management-alpine
 minio/minio
+
+# 通过channel聊天解决问题, 看板, 
+mattermost/mattermost-team-edition:release-11.6

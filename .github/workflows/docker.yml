@@ -64,24 +64,50 @@ jobs:
 
         get_image_digest() {
             local image="$1"
+            local platform="${2:-}"
             local manifest=$(docker manifest inspect "$image" 2>/dev/null)
             if [ -z "$manifest" ]; then
                 echo ""
                 return
             fi
-            local digest=$(echo "$manifest" | jq -r '.config.digest // empty' 2>/dev/null)
-            if [ -n "$digest" ]; then
-                echo "$digest"
+            local config_digest=$(echo "$manifest" | jq -r '.config.digest // empty' 2>/dev/null)
+            if [ -n "$config_digest" ]; then
+                echo "$config_digest"
+                return
+            fi
+            local arch="amd64"
+            local variant=""
+            if [[ -n "$platform" ]]; then
+                local p="${platform#linux/}"
+                if [[ "$p" == arm/v* ]]; then
+                    arch="arm"
+                    variant="${p#arm/}"
+                else
+                    arch="$p"
+                fi
+            fi
+            local platform_digest=$(echo "$manifest" | jq -r --arg arch "$arch" --arg variant "$variant" \
+                '(.manifests[] | select(.platform.architecture==$arch and (.platform.variant // "")==$variant)).digest // empty' 2>/dev/null)
+            if [ -z "$platform_digest" ]; then
+                echo ""
+                return
+            fi
+            local base="${image%:*}"
+            [ "$base" = "$image" ] && base="$image"
+            local platform_manifest=$(docker manifest inspect "${base}@${platform_digest}" 2>/dev/null)
+            if [ -n "$platform_manifest" ]; then
+                echo "$platform_manifest" | jq -r '.config.digest // empty' 2>/dev/null
             else
-                echo "$manifest" | jq -r '[.manifests[].digest] | sort | join(",")' 2>/dev/null || echo ""
+                echo ""
             fi
         }
 
         check_need_update() {
             local source_image="$1"
             local target_image="$2"
+            local platform="${3:-}"
 
-            local source_digest=$(get_image_digest "$source_image")
+            local source_digest=$(get_image_digest "$source_image" "$platform")
             if [ -z "$source_digest" ]; then
                 echo "[WARN] 无法获取源镜像 digest: $source_image"
                 return 0
@@ -96,22 +122,6 @@ jobs:
             if [ "$source_digest" = "$target_digest" ]; then
                 echo "[INFO] digest 相同，无需更新"
                 return 1
-            fi
-
-            # 多架构 vs 单架构: 逐个比对 manifest list 中的 digest
-            local is_source_list=$(echo "$source_digest" | grep -c ',')
-            local is_target_list=$(echo "$target_digest" | grep -c ',')
-            if [ "$is_source_list" != "$is_target_list" ]; then
-                local single_digest="$target_digest"
-                local list_digests="$source_digest"
-                if [ "$is_target_list" -gt 0 ]; then
-                    single_digest="$source_digest"
-                    list_digests="$target_digest"
-                fi
-                if echo ",$list_digests," | grep -q ",$single_digest,"; then
-                    echo "[INFO] 单架构 digest 包含在多架构列表中，无需更新"
-                    return 1
-                fi
             fi
 
             echo "[INFO] digest 不同，需要更新"
@@ -208,8 +218,7 @@ jobs:
             fi
             new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/${name_space_prefix}${image_name}:${new_tag}"
 
-            # 检查是否需要更新（比较 Docker Hub 和阿里云的 digest）
-            if ! check_need_update "$image" "$new_image"; then
+            if ! check_need_update "$image" "$new_image" "$platform"; then
                 echo "[SKIP] 镜像已是最新: $new_image"
                 continue
             fi

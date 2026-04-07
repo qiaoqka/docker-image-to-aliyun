@@ -56,6 +56,7 @@ makeplane/plane-proxy:v1.3.0
 valkey/valkey:7.2.11-alpine
 rabbitmq:3.13.6-management-alpine
 minio/minio
+minio/minio:RELEASE.2025-09-07T16-13-09Z
 
 # 通过channel聊天解决问题, 看板, 
 mattermost/mattermost-team-edition:release-11.6

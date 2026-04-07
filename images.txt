@@ -45,6 +45,14 @@ makeplane/plane-admin:v1.2.3
 makeplane/plane-live:v1.2.3
 makeplane/plane-backend:v1.2.3
 makeplane/plane-proxy:v1.2.3
+
+makeplane/plane-frontend:v1.3.0
+makeplane/plane-space:v1.3.0
+makeplane/plane-admin:v1.3.0
+makeplane/plane-live:v1.3.0
+makeplane/plane-backend:v1.3.0
+makeplane/plane-proxy:v1.3.0
+
 valkey/valkey:7.2.11-alpine
 rabbitmq:3.13.6-management-alpine
 minio/minio

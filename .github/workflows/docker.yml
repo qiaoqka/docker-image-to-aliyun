@@ -62,41 +62,62 @@ jobs:
       run: |
         echo "$ALIYUN_REGISTRY_PASSWORD" | docker login -u "$ALIYUN_REGISTRY_USER" --password-stdin "$ALIYUN_REGISTRY"
 
-        # 获取镜像 digest
         get_image_digest() {
             local image="$1"
-            docker manifest inspect "$image" 2>/dev/null | jq -r '.config.digest' 2>/dev/null || echo ""
+            local manifest=$(docker manifest inspect "$image" 2>/dev/null)
+            if [ -z "$manifest" ]; then
+                echo ""
+                return
+            fi
+            local digest=$(echo "$manifest" | jq -r '.config.digest // empty' 2>/dev/null)
+            if [ -n "$digest" ]; then
+                echo "$digest"
+            else
+                echo "$manifest" | jq -r '[.manifests[].digest] | sort | join(",")' 2>/dev/null || echo ""
+            fi
         }
 
-        # 检查镜像是否需要更新（比较 Docker Hub 和阿里云的 digest）
         check_need_update() {
             local source_image="$1"
             local target_image="$2"
 
-            # 获取源镜像（Docker Hub）的 digest
             local source_digest=$(get_image_digest "$source_image")
             if [ -z "$source_digest" ]; then
                 echo "[WARN] 无法获取源镜像 digest: $source_image"
-                return 0  # 无法获取时默认需要更新
+                return 0
             fi
 
-            # 获取目标镜像（阿里云）的 digest
             local target_digest=$(get_image_digest "$target_image")
             if [ -z "$target_digest" ]; then
                 echo "[INFO] 阿里云镜像不存在: $target_image"
-                return 0  # 阿里云不存在，需要更新
+                return 0
             fi
 
-            # 比较 digest
-            if [ "$source_digest" != "$target_digest" ]; then
-                echo "[INFO] digest 不同，需要更新"
-                echo "  Docker Hub: $source_digest"
-                echo "  阿里云:     $target_digest"
-                return 0  # 需要更新
-            else
+            if [ "$source_digest" = "$target_digest" ]; then
                 echo "[INFO] digest 相同，无需更新"
-                return 1  # 不需要更新
+                return 1
             fi
+
+            # 多架构 vs 单架构: 逐个比对 manifest list 中的 digest
+            local is_source_list=$(echo "$source_digest" | grep -c ',')
+            local is_target_list=$(echo "$target_digest" | grep -c ',')
+            if [ "$is_source_list" != "$is_target_list" ]; then
+                local single_digest="$target_digest"
+                local list_digests="$source_digest"
+                if [ "$is_target_list" -gt 0 ]; then
+                    single_digest="$source_digest"
+                    list_digests="$target_digest"
+                fi
+                if echo ",$list_digests," | grep -q ",$single_digest,"; then
+                    echo "[INFO] 单架构 digest 包含在多架构列表中，无需更新"
+                    return 1
+                fi
+            fi
+
+            echo "[INFO] digest 不同，需要更新"
+            echo "  Docker Hub: $source_digest"
+            echo "  阿里云:     $target_digest"
+            return 0
         }
 
         # 数据预处理,判断镜像是否重名

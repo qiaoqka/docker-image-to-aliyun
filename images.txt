@@ -12,29 +12,38 @@
 
 
 # 开发相关
+alpine
+alpine:3.21
 oven/bun:1.2.19-alpine
 mysql:5.7.44
 postgres:15.7-alpine
 postgres:18-alpine
-nginx:1.25.5
-alpine
+# postgres的vector插件
+pgvector/pgvector:pg17
 python:alpine3.19
 --platform=linux/arm64 continuumio/miniconda3:24.9.2-0
 --platform=linux/arm/v7 python:3.9.23-slim-bullseye
 
+nginx:1.25.5
+
+# node.js
+node:22-alpine
+# go
+golang:1.26-alpine
+# php
 php:7.4-fpm
 
-# alist
+# 工具 alist
 xhofe/alist:v3.35.0
 xhofe/alist:latest
 --platform=linux/arm64 xiaoyaliu/alist
 --platform=linux/arm/v7 xiaoyaliu/alist
 
-# aria2-pro
+# 工具 aria2-pro
 p3terx/aria2-pro
 p3terx/ariang
 
-# 工具
+# 工具 docker管理
 portainer/portainer-ce:2.39.0
 
 # 项目管理 开源软件 plane

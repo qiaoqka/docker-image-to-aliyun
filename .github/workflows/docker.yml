@@ -107,6 +107,10 @@ jobs:
             local target_image="$2"
             local platform="${3:-}"
 
+            echo "📦 处理镜像: $source_image"
+            echo "阿里云镜像: $target_image"
+            echo "========================================"
+
             local source_digest=$(get_image_digest "$source_image" "$platform")
             if [ -z "$source_digest" ]; then
                 echo "[WARN] 无法获取源镜像 digest: $source_image"
@@ -115,12 +119,15 @@ jobs:
 
             local target_digest=$(get_image_digest "$target_image")
             if [ -z "$target_digest" ]; then
-                echo "[INFO] 阿里云镜像不存在: $target_image"
+                echo "[INFO] 阿里云镜像不存在，需要推送"
+                echo "  Docker Hub digest: $source_digest"
                 return 0
             fi
 
+            echo "检查镜像是否已存在..."
             if [ "$source_digest" = "$target_digest" ]; then
-                echo "[INFO] digest 相同，无需更新"
+                echo "✅ 镜像已存在，跳过"
+                echo "REPOSITORY:TAG                             IMAGE ID       SIZE"
                 return 1
             fi
 
@@ -219,13 +226,14 @@ jobs:
             new_image="$ALIYUN_REGISTRY/$ALIYUN_NAME_SPACE/${name_space_prefix}${image_name}:${new_tag}"
 
             if ! check_need_update "$image" "$new_image" "$platform"; then
-                echo "[SKIP] 镜像已是最新: $new_image"
+                echo "----------------------------------------"
                 continue
             fi
 
             echo "[PULL] $line"
             if ! docker pull $line; then
                 echo "[ERROR] 拉取失败: $line，跳过"
+                echo "----------------------------------------"
                 continue
             fi
 
@@ -235,12 +243,13 @@ jobs:
             echo "[PUSH] $new_image"
             if ! docker push $new_image; then
                 echo "[ERROR] 推送失败: $new_image"
+                echo "----------------------------------------"
                 continue
             fi
 
+            echo "✅ 推送成功: ${name_space_prefix}${image_name}:${new_tag}"
             echo "[CLEAN] 清理镜像..."
             docker rmi $image $new_image > /dev/null 2>&1 || true
-            echo "[DONE] ${name_space_prefix}${image_name}:${new_tag}"
             echo "----------------------------------------"
 
         done < images.txt

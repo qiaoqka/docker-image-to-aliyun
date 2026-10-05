@@ -1,0 +1,4 @@
+# 本地测试与 Action 的 Python 环境产物，不进入镜像清单仓。
+__pycache__/
+.pytest_cache/
+.venv/

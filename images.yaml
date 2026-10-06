@@ -2,9 +2,22 @@
 #
 # 字段：
 #   source   必填，上游镜像；缺省 tag 视为 latest。
-#   platform 可选，架构字符串列表，如 [linux/arm64]、[linux/arm64, linux/arm/v7]；
-#            省略表示按 amd64 处理且阿里云 tag 不带架构后缀；列表逐项展开成多条，
-#            单架构也写成单元素列表，同一 source 多架构合并到一条列表。
+#   platform 可选，非空字符串列表；单架构也必须写成列表。形如 os/arch 或 os/arch/variant。
+#            省略 = 默认 linux/amd64，阿里云 tag 不带架构后缀。不要写 [linux/amd64]：
+#            显式写出就会给 tag 加 -linux-amd64，和省略不是同一条。
+#            同一 source 的多架构写在一条的列表里，按顺序展开成多条。
+#            常用取值（镜像必须真有该架构，写了就会去检查/拉取/推送）：
+#              linux/amd64      默认；homenas 用省略，不要显式写
+#              linux/arm64      64 位 ARM（也有人写成 linux/arm64/v8）
+#              linux/arm64/v8
+#              linux/arm/v7     32 位 ARM；homenas 不要拉
+#              linux/arm/v6
+#              linux/386
+#              linux/ppc64le
+#              linux/s390x
+#              linux/riscv64
+#            写法：platform: [linux/arm64]
+#                  platform: [linux/arm64, linux/arm/v7]
 #   local    可选，拉取后额外打的本地 tag；省略表示只保留 source 名字。
 #
 # 引用支持 1/2/3 段：name、namespace/name、registry/namespace/name；

@@ -2505,6 +2505,49 @@ def test_docker_arm_uses_independent_tag_and_tracks_docker_objects(
     assert result["cleanup"]["storage_reclaimed"] is False, "不得宣称服务端存储已释放"
 
 
+def test_docker_manifest_delete_without_delete_scope_keeps_valid_sample(
+    fault_endpoints: Callable[..., FaultEndpoint],
+    docker_stub: DockerStub,
+    tls_client_context: ssl.SSLContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DELETE challenge 含本仓 delete 时不得申请更高权限；测量仍 valid，manifest 只记残留。"""
+    monkeypatch.setenv("DOCKER_STUB_PUSH_STDOUT", consistent_push_output())
+    inner = upload_success_responder(
+        docker_layer=(DOCKER_LAYER_DIGEST, DOCKER_LAYER_SIZE),
+        docker_config_digest=STUB_IMAGE_ID,
+        slow_read_delay=0.0,
+    )
+
+    def respond(request: RecordedRequest) -> FaultSpec:
+        path, _, _query = request.target.partition("?")
+        if request.method == "DELETE" and "/manifests/" in path:
+            host = request.headers.get("host", "")
+            scope = "repository:perf-manifest-delete/image-sync-perf:pull,push,delete"
+            challenge = f'Bearer realm="https://{host}/token",service="registry",scope="{scope}"'
+            return FaultSpec(status=401, headers={"WWW-Authenticate": challenge})
+        return inner(request)
+
+    endpoint = fault_endpoints(respond)
+    result = docker_arm_sample(
+        endpoint,
+        tls_client_context,
+        namespace="perf-manifest-delete",
+        run_id="manifest-delete-scope",
+    )
+
+    assert_status(result, "valid")
+    assert result["reason"] == "ok", result_json(result)
+    assert result["docker"]["status"] == "pushed", result_json(result)
+    assert result["cleanup"]["status"] == "ok", result_json(result)
+    residuals = result["cleanup"]["residuals"]
+    assert any(entry.startswith("docker_manifest:") for entry in residuals), result_json(result)
+    assert result["cleanup"]["docker_manifest_deleted"] is False, result_json(result)
+    assert result["cleanup"]["storage_reclaimed"] is False, "不得宣称服务端存储已释放"
+    deleted = [request.target for request in endpoint.requests("DELETE")]
+    assert any("/manifests/" in target for target in deleted), f"仍须尝试按 digest 删除: {deleted}"
+
+
 def peak_growth_bytes(before: int, after: int) -> int:
     """把两次 ru_maxrss 读数换算成字节增量（macOS 为字节，Linux 为 KiB）。"""
     scale = 1 if sys.platform == "darwin" else 1024

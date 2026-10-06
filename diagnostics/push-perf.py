@@ -2126,10 +2126,15 @@ class _SampleRun:
         self._mark_partial(f"cancel:http_{exchange.response.status}", f"upload:{reference}")
 
     def _delete_docker_manifest(self) -> None:
-        """按“本次响应原文重算的”精确 digest 删除本次 Docker manifest。"""
+        """尝试按精确 digest 删除本次 Docker manifest。
+
+        删除拒绝（含 Bearer 要求本仓 delete，而 token 只收 pull/push）只记残留，
+        不扩大权限，也不把已成功的测量改成 cleanup_incomplete。
+        """
         if self._docker_manifest_digest is None:
             return
         assert self._client is not None and self._origin is not None
+        residual = f"docker_manifest:{self._docker_manifest_digest}"
         try:
             exchange = self._client.call(
                 "DELETE",
@@ -2138,20 +2143,19 @@ class _SampleRun:
                 self._request_deadline(),
             )
         except _SampleError as error:
-            self._mark_partial(f"docker_manifest:{error.reason}", f"docker_manifest:{self._docker_manifest_digest}")
+            self._cleanup_errors.append(f"docker_manifest:{error.reason}")
+            self._residuals.append(residual)
             return
         if exchange.response is None:
-            self._mark_partial(
-                f"docker_manifest:{exchange.error_reason or REASON_CONNECTION_FAILED}",
-                f"docker_manifest:{self._docker_manifest_digest}",
+            self._cleanup_errors.append(
+                f"docker_manifest:{exchange.error_reason or REASON_CONNECTION_FAILED}"
             )
+            self._residuals.append(residual)
             return
         if exchange.response.status in {200, 202}:
             return
-        self._mark_partial(
-            f"docker_manifest:http_{exchange.response.status}",
-            f"docker_manifest:{self._docker_manifest_digest}",
-        )
+        self._cleanup_errors.append(f"docker_manifest:http_{exchange.response.status}")
+        self._residuals.append(residual)
 
     def _remove_docker_artifacts(self) -> None:
         """删除本地测试镜像并沿用既有 logout 处理（如实记录 logout 结果）。"""

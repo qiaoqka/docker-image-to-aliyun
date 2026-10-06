@@ -37,7 +37,7 @@ from scripts.image_manifest import (  # noqa: E402  # pyright: ignore[reportMiss
 
 MODULE_PATH = REPO_ROOT / "scripts" / "image_manifest.py"
 REAL_MANIFEST = REPO_ROOT / "images.yaml"
-REAL_MANIFEST_ENTRY_COUNT = 39
+REAL_MANIFEST_ENTRY_COUNT = 40
 
 
 def _write_manifest(tmp_path: Path, body: str) -> Path:
@@ -175,6 +175,7 @@ def test_load_images_reads_real_manifest() -> None:
     images = load_images(REAL_MANIFEST)
     assert len(images) == REAL_MANIFEST_ENTRY_COUNT
     assert Image("postgres:18.6") in images
+    assert Image("eclipse-temurin:21-jre") in images
     assert Image("alpine/minio:RELEASE.2025-10-15T17-29-55Z", local="minio/minio:latest") in images
     assert Image("xiaoyaliu/alist", platform="linux/arm64") in images
     assert Image("xiaoyaliu/alist", platform="linux/arm/v7") in images
@@ -503,6 +504,7 @@ def test_cli_emits_every_real_manifest_entry() -> None:
     for row in rows:
         _assert_clean_row(row)
     assert "alpine/minio:RELEASE.2025-10-15T17-29-55Z\tlinux/amd64\talpine_minio:RELEASE.2025-10-15T17-29-55Z\tminio/minio:latest" in rows
+    assert "eclipse-temurin:21-jre\tlinux/amd64\teclipse-temurin:21-jre\t-" in rows
 
 
 def test_cli_fails_without_rows_for_invalid_manifest(tmp_path: Path) -> None:

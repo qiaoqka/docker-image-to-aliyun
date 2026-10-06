@@ -44,6 +44,8 @@ images:
   - source: golang:1.26-alpine
   # php
   - source: php:7.4-fpm
+  # java
+  - source: eclipse-temurin:21-jre
 
   # 工具 alist
   - source: xhofe/alist:v3.35.0

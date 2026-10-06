@@ -41,7 +41,7 @@ NAMESPACE = "ns"
 PASSWORD = "s3cret-pass"
 
 
-# docker 替身：按 policy 模拟 manifest/login/logout/pull/tag/push/rmi，并记录全部 argv。
+# docker 替身：按 policy 模拟原始镜像元数据及镜像操作，并记录外部副作用。
 FAKE_DOCKER = '''#!/usr/bin/env python3
 """测试用 docker 替身。"""
 import json
@@ -69,10 +69,18 @@ def main() -> int:
         if policy.get("logout_error"):
             print(policy["logout_error"], file=sys.stderr)
         return int(policy.get("logout_rc", 0))
-    if sub == "manifest":
+    if argv == ["buildx", "version"]:
+        return int(policy.get("buildx_rc", 0))
+    if argv[:4] == ["buildx", "imagetools", "inspect", "--raw"]:
+        if policy.get("buildx_rc", 0):
+            return 1
         if policy.get("manifest_error"):
             print(policy["manifest_error"], file=sys.stderr)
             return 1
+        raw_manifests = policy.get("raw_manifests", {})
+        if argv[-1] in raw_manifests:
+            print(raw_manifests[argv[-1]], end="")
+            return 0
         manifests = policy.get("manifests", {})
         if argv[-1] in manifests:
             json.dump(manifests[argv[-1]], sys.stdout)
@@ -86,7 +94,7 @@ def main() -> int:
         return 1 if argv[-1] in policy.get("push_fail", []) else 0
     if sub == "rmi":
         return 0
-    return 0
+    return 2
 
 
 if __name__ == "__main__":
@@ -100,7 +108,7 @@ def _target(mirror: str) -> str:
 
 
 def _manifest(digest: str) -> dict[str, Any]:
-    """单平台镜像的 `docker manifest inspect` 响应。"""
+    """单平台原始 manifest，config.digest 不需要额外读取 config blob。"""
     return {"config": {"digest": digest}}
 
 
@@ -124,11 +132,14 @@ def _run_sync(
     yaml_text: str,
     *,
     manifests: dict[str, Any] | None = None,
+    raw_manifests: dict[str, str] | None = None,
     pull_fail: list[str] | None = None,
     tag_fail: list[str] | None = None,
     push_fail: list[str] | None = None,
     logout_rc: int = 0,
     manifest_error: str = "",
+    buildx_rc: int = 0,
+    registry: str = REGISTRY,
     logout_error: str = "",
     stdin_data: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
@@ -156,11 +167,13 @@ def _run_sync(
 
     policy = {
         "manifests": manifests or {},
+        "raw_manifests": raw_manifests or {},
         "pull_fail": pull_fail or [],
         "tag_fail": tag_fail or [],
         "push_fail": push_fail or [],
         "logout_rc": logout_rc,
         "manifest_error": manifest_error,
+        "buildx_rc": buildx_rc,
         "logout_error": logout_error,
     }
     policy_path = tmp_path / "policy.json"
@@ -171,7 +184,7 @@ def _run_sync(
         **os.environ,
         "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
         "PYTHON": sys.executable,
-        "ALIYUN_REGISTRY": REGISTRY,
+        "ALIYUN_REGISTRY": registry,
         "ALIYUN_NAME_SPACE": NAMESPACE,
         "ALIYUN_REGISTRY_USER": "user",
         "ALIYUN_REGISTRY_PASSWORD": PASSWORD,
@@ -434,6 +447,7 @@ def test_rows_come_from_module_not_stdin(tmp_path: Path) -> None:
 @pytest.mark.parametrize(("platform", "descriptor", "mirror"), [
     ("linux/amd64", {"os": "linux", "architecture": "amd64"}, "testmulti:1-linux-amd64"),
     ("linux/arm64", {"os": "linux", "architecture": "arm64", "variant": "v8"}, "testmulti:1-linux-arm64"),
+    ("linux/arm64/v8", {"os": "linux", "architecture": "arm64"}, "testmulti:1-linux-arm64-v8"),
     ("linux/arm64/v8", {"os": "linux", "architecture": "arm64", "variant": "v8"}, "testmulti:1-linux-arm64-v8"),
 ])
 def test_manifest_descriptor_matches_full_platform(tmp_path: Path, platform: str, descriptor: dict[str, str], mirror: str) -> None:
@@ -469,6 +483,83 @@ def test_logout_failure_keeps_credential_store_diagnostic(tmp_path: Path) -> Non
     result, _ = _run_sync(tmp_path, _yaml("source: alpine"), logout_rc=7, logout_error="credential store unavailable")
     assert result.returncode == 1
     assert "credential store unavailable" in result.stderr
+
+
+def test_missing_buildx_prevents_login_and_bulk_update(tmp_path: Path) -> None:
+    """插件缺失不能退化为未知 digest 后全量重推并假报成功。"""
+    result, calls = _run_sync(tmp_path, _yaml("source: alpine"), buildx_rc=1)
+    assert result.returncode != 0
+    assert "login" not in _subcommands(calls)
+    assert "pull" not in _subcommands(calls)
+    assert "push" not in _subcommands(calls)
+
+
+def test_registry_port_is_preserved_for_selected_source_and_target(tmp_path: Path) -> None:
+    """端口不会在选择子 manifest 时被误删，源与目标相等仍必须跳过。"""
+    registry = "reg.example.com:5000"
+    source = registry + "/ns/alpine:latest"
+    target = registry + "/ns/ns_alpine:latest"
+    child = "sha256:" + "1" * 64
+    config = "sha256:" + "2" * 64
+    index = {"manifests": [{"platform": {"os": "linux", "architecture": "amd64"}, "digest": child}]}
+    manifests = {
+        source: index, registry + "/ns/alpine@" + child: _manifest(config),
+        target: index, registry + "/ns/ns_alpine@" + child: _manifest(config),
+    }
+    result, calls = _run_sync(tmp_path, _yaml("source: " + source), manifests=manifests, registry=registry)
+    assert result.returncode == 0, result.stderr
+    assert "pull" not in _subcommands(calls)
+    assert "push" not in _subcommands(calls)
+
+
+@pytest.mark.parametrize("raw_manifest", ["not an object", {"config": {}}, {"manifests": []}])
+def test_unusable_raw_metadata_cannot_skip_update(tmp_path: Path, raw_manifest: Any) -> None:
+    """无效结构、缺 digest 或缺平台不能与已知目标相等而错误跳过。"""
+    manifests = {"broken:1": raw_manifest, _target("broken:1"): _manifest("sha256:known")}
+    result, calls = _run_sync(tmp_path, _yaml("source: broken:1"), manifests=manifests)
+    assert result.returncode == 0, result.stderr
+    assert "pull" in _subcommands(calls)
+    assert "push" in _subcommands(calls)
+
+
+@pytest.mark.parametrize("variant", ["v6", "v7", "v8"])
+def test_arm_variants_select_matching_config_in_competing_index(tmp_path: Path, variant: str) -> None:
+    """ARM 多个 variant 同时存在时，不能误选其他 variant 后错误更新。"""
+    children = {"v6": "sha256:" + "6" * 64, "v7": "sha256:" + "7" * 64, "v8": "sha256:" + "8" * 64}
+    configs = {"v6": "sha256:" + "1" * 64, "v7": "sha256:" + "2" * 64, "v8": "sha256:" + "3" * 64}
+    manifests = {
+        "testarm:1": {"manifests": [
+            {"platform": {"os": "linux", "architecture": "arm", "variant": key}, "digest": child}
+            for key, child in children.items()
+        ]},
+        **{"testarm@" + child: _manifest(configs[key]) for key, child in children.items()},
+        _target("testarm:1-linux-arm-" + variant): _manifest(configs[variant]),
+    }
+    result, calls = _run_sync(
+        tmp_path, _yaml("source: testarm:1\n    platform: [linux/arm/" + variant + "]"), manifests=manifests,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "pull" not in _subcommands(calls)
+    assert "push" not in _subcommands(calls)
+
+
+def test_partially_parsed_child_manifest_cannot_skip_update(tmp_path: Path) -> None:
+    """子 manifest 先输出 digest 再解析失败时，不能把残留输出当成相等。"""
+    child = "sha256:" + "1" * 64
+    desired = "sha256:" + "2" * 64
+    manifests = {
+        "broken:1": {"manifests": [{
+            "platform": {"os": "linux", "architecture": "amd64"}, "digest": child,
+        }]},
+        _target("broken:1"): _manifest(desired),
+    }
+    raw = {"broken@" + child: json.dumps({"config": {"digest": desired}}) + "INVALID"}
+    result, calls = _run_sync(
+        tmp_path, _yaml("source: broken:1"), manifests=manifests, raw_manifests=raw,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "pull" in _subcommands(calls)
+    assert "push" in _subcommands(calls)
 
 
 if __name__ == "__main__":

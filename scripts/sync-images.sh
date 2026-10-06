@@ -117,8 +117,8 @@ usage() {
 # ============================================================
 
 # @desc 查询镜像的 config.digest。
-#       单平台镜像直接读顶层 config.digest；多平台 manifest list 先按 platform
-#       选出子 manifest，再读其 config.digest。查询失败视为未知（输出空串）。
+#       读取原始 manifest；index 只读取匹配 platform 的子 manifest。
+#       不展开其他平台或读取 config blob，查询失败视为未知（输出空串）。
 # $1   镜像引用
 # $2   平台，如 linux/amd64（可空）
 # stdout: digest 字符串；无法确定时输出空串
@@ -128,7 +128,7 @@ get_image_digest() {
     local platform="${2:-}"
     local manifest=""
 
-    manifest="$(docker manifest inspect "$image")" || return 0
+    manifest="$(docker buildx imagetools inspect --raw "$image")" || return 0
     if [[ -z "$manifest" ]]; then
         printf ''
         return 0
@@ -156,12 +156,17 @@ get_image_digest() {
         return 0
     fi
 
-    local base="${image%:*}"
-    [[ "$base" == "$image" ]] && base="$image"
+    # tag 只存在于最后一个路径段；registry 的端口不能被误删。
+    local base="${image%%@*}"
+    if [[ "${base##*/}" == *:* ]]; then
+        base="${base%:*}"
+    fi
     local platform_manifest=""
-    platform_manifest="$(docker manifest inspect "${base}@${platform_digest}")" || return 0
+    platform_manifest="$(docker buildx imagetools inspect --raw "${base}@${platform_digest}")" || return 0
     if [[ -n "$platform_manifest" ]]; then
-        printf '%s' "$platform_manifest" | jq -r '.config.digest // empty' || true
+        # jq 可能先输出一个完整对象的 digest 再报解析错误；只有成功输出才可信。
+        config_digest="$(printf '%s' "$platform_manifest" | jq -r '.config.digest // empty')" || return 0
+        printf '%s' "$config_digest"
     fi
     return 0
 }
@@ -296,6 +301,8 @@ main() {
         die "清单为空：$manifest_path"
     fi
     log_info "清单解析完成，共 ${#rows[@]} 条"
+    # 缺插件是运行前提失败，不能降级成 39 条 digest 未知后全量重推。
+    docker buildx version >/dev/null 2>&1 || die "docker buildx 不可用（digest 检查需要 imagetools）"
 
     require_env ALIYUN_REGISTRY ALIYUN_NAME_SPACE ALIYUN_REGISTRY_USER ALIYUN_REGISTRY_PASSWORD
 

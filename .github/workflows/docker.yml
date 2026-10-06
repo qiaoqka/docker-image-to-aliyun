@@ -20,7 +20,12 @@ env:
 jobs:
   build:
     name: Pull
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # 与独立诊断串行，避免本仓正常上传污染对照结果。
+    concurrency:
+      group: aliyun-image-upload
+      cancel-in-progress: false
+
     steps:
     - name: Before freeing up disk space
       run: |
@@ -55,10 +60,10 @@ jobs:
         echo "=============================================================================="
 
     - name: Checkout Code
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     - name: Docker Setup Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
     - name: Install jq
       run: sudo apt-get update && sudo apt-get install -y jq

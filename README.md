@@ -56,6 +56,37 @@ images:
 
 自动触发只监听 `images.yaml`、`.github/workflows/docker.yml`、`scripts/**` 的变更。同步串行处理全清单：逐条比对源与阿里云的 `config.digest`，相同就跳过，不同或无法确定才拉取并推送；任意一条失败都会让本次运行变红。
 
+digest 检查依赖 Docker Buildx：直接读取原始 manifest；遇到 index 时只查询匹配架构的一个子 manifest，不展开其他架构或读取 config blob。插件缺失会在登录前失败，避免把运行前提错误当成全清单需要更新。GitHub runner 固定为 `ubuntu-24.04`；官方 checkout、Buildx 与诊断结果上传 Action 均使用完整 commit SHA。
+
+### 上传对照诊断
+
+独立入口是 [push-perf.yml](/.github/workflows/push-perf.yml)，实现是 [push-perf.py](/diagnostics/push-perf.py)。只有无 inputs 的手动入口；推送诊断文件不会自动上传测试内容。正常同步与诊断 job 共用 `aliyun-image-upload` 并发锁，不取消正在上传的任务。该锁不覆盖本机或其他仓库，对照期间不要同时从控制端上传。
+
+前提：在既有命名空间下创建*私有* `image-sync-perf` 仓库。诊断只使用该仓，不借用业务镜像仓；认证或仓库检查失败会明确退出。GitHub 使用现有四项 `ALIYUN_*` secrets，不增加凭据 inputs。
+
+通过 CLI 启动 GitHub 对照：
+
+```sh
+gh workflow run push-perf.yml
+```
+
+控制端先通过既有凭据管理方式向进程提供 `ALIYUN_REGISTRY`、`ALIYUN_NAME_SPACE`、`ALIYUN_REGISTRY_USER`、`ALIYUN_REGISTRY_PASSWORD`，不要将密码放进 argv 或公开文件。仅运行 HTTP 臂，不要求本机 Docker daemon：
+
+```sh
+mkdir -p /tmp/opencode-workspaces/docker
+RESULT_DIR="$(mktemp -d /tmp/opencode-workspaces/docker/perf.XXXXXX)"
+python3 diagnostics/push-perf.py --http-only --environment control \
+  --auth-origin https://dockerauth.cn-hangzhou.aliyuncs.com \
+  --output "$RESULT_DIR/perf-summary.json" \
+  --summary "$RESULT_DIR/perf-summary.md"
+```
+
+`--auth-origin` 只显式信任一个完整 HTTPS 认证 origin，默认仅信任 Registry 自身。阿里云认证端点是经官方文档与真实 challenge 核验的 [`dockerauth.cn-hangzhou.aliyuncs.com`](https://help.aliyun.com/en/acr/user-guide/use-cr-diagnosis-to-troubleshoot-image-push-and-pull-exceptions)；不同主机、端口、HTTP 降级和任意重定向不受信任。认证信任不会自动扩大 upload Location 的权限。
+
+每端每次生成全新 64 MiB 随机内容，用一次持续 PATCH 测量真实 body 传输，再独立测提交和 HEAD 验证。原始 HTTP 臂止于 blob，不发布 manifest 或 tag；GitHub 另以同一载荷生成单层镜像，使用独立测试 tag 执行真实 Docker 推送，并报告 gzip 参考值。已有 blob、Docker 去重、descriptor 不一致或缺少真实上传证据的样本不能作为速度结论。连接上限 30 秒；原始 HTTP 与 Docker 推送各自最多 35 分钟；CI job 最多 90 分钟。不自动重试大 body 或替换失败样本。
+
+JSON、GitHub step summary 和 artifact 只保存去敏状态、阶段耗时、字节数、测试 tag/digest、版本及清理结果，不保存密码、token、签名 Location 或原始异常。结束时清理本地对象，只取消本次未完成 upload，并尝试删除 Docker 臂本次 manifest/tag。已提交的原始 blob、响应丢失后的未知提交、删除拒绝及孤立 blob 会报告精确残留；不执行全仓删除或 blob GC，不宣称存储已释放。首次每端一个样本是探索性证据，不能据此判定稳定链路差异或确定根因。
+
 ### 使用镜像
 
 个人实例的镜像仓库默认私有，pull 前必须 `docker login` 登录，不建议把仓库改成公开。

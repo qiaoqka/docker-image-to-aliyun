@@ -1,0 +1,54 @@
+name: Image upload comparison
+
+on:
+  # 独立诊断只由 CLI 显式启动，不接受输入，不监听 push。
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ALIYUN_REGISTRY: "${{ secrets.ALIYUN_REGISTRY }}"
+  ALIYUN_NAME_SPACE: "${{ secrets.ALIYUN_NAME_SPACE }}"
+  ALIYUN_REGISTRY_USER: "${{ secrets.ALIYUN_REGISTRY_USER }}"
+  ALIYUN_REGISTRY_PASSWORD: "${{ secrets.ALIYUN_REGISTRY_PASSWORD }}"
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # 与正常同步共用 job 锁；不取消正在上传的样本。
+    concurrency:
+      group: aliyun-image-upload
+      cancel-in-progress: false
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Record runner environment
+        run: |
+          printf 'ImageOS=%s\nImageVersion=%s\n' "$ImageOS" "$ImageVersion"
+          uname -srv
+          python3 --version
+          docker version
+          docker buildx version
+
+      - name: Compare raw HTTP and Docker upload
+        run: |
+          python3 diagnostics/push-perf.py \
+            --environment github \
+            --run-id "${{ github.run_id }}-${{ github.run_attempt }}" \
+            --auth-origin https://dockerauth.cn-hangzhou.aliyuncs.com \
+            --output perf-summary.json \
+            --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve sanitized result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: perf-summary.json
+          if-no-files-found: error

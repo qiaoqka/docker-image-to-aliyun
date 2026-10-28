@@ -63,6 +63,23 @@ bash scripts/sync-images.sh images.yaml --only alpine:latest nginx:1.25.5
 
 `--only` 保留命中名字的全部架构条目；名字不在清单里会在登录前报错，不会静默同步 0 条。
 
+### 一步到位同步指定镜像
+
+`scripts/ensure-and-sync.sh` 把「补清单 → 提交推送 → 触发 scoped Action → 等待结果」串成一步，避免 push 触发全量复核：
+
+```bash
+bash scripts/ensure-and-sync.sh --wait python:3.11.9-slim-bookworm
+bash scripts/ensure-and-sync.sh --wait python:3.11.9-slim-bookworm alpine:3.21
+```
+
+- 清单缺条目时追加到末尾，并同步 `tests/test_image_manifest.py` 的 `REAL_MANIFEST_ENTRY_COUNT`；已有条目（含 `local` 别名命中）不改动，可重复执行。
+- 提交信息带 `[skip ci]`：这次 push 不触发全量运行，只有随后的 `--only` 运行会同步，范围精确到目标镜像。
+- 需要 `gh` 已登录且有本仓 Actions 写权限；`--timeout`（默认 900 秒）限制等待时长，超时或运行失败退出非零。
+- `--local-only` 只改清单不提交不触发；`--dry-run` 只打印计划。两者用于本地核对。
+- `--repo <owner/name>` 覆盖目标仓库，默认取 `origin`。
+
+`运维脚本/ssh-docker-pull` 的 `--auto-sync` 直接调用这个脚本，因此该脚本是「让阿里云具备某镜像」的唯一入口。
+
 自动触发只监听 `images.yaml`、`.github/workflows/docker.yml`、`scripts/**` 的变更。同步串行处理清单（未给 `--only` 时为全清单）：逐条比对源与阿里云的 `config.digest`，相同就跳过，不同或无法确定才拉取并推送；任意一条失败都会让本次运行变红。
 
 digest 检查依赖 Docker Buildx：直接读取原始 manifest；遇到 index 时只查询匹配架构的一个子 manifest，不展开其他架构或读取 config blob。插件缺失会在登录前失败，避免把运行前提错误当成全清单需要更新。GitHub runner 固定为 `ubuntu-24.04`；官方 checkout、Buildx 与诊断结果上传 Action 均使用完整 commit SHA。

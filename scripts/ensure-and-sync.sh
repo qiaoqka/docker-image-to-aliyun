@@ -83,7 +83,9 @@ resolve_repo() {
     remote_url="$(git -C "$REPO_ROOT" remote get-url origin)" || die '无法读取 origin 远程地址'
     REPO_SLUG="${remote_url#*github.com[:/]}"
     REPO_SLUG="${REPO_SLUG%.git}"
-    [[ "$REPO_SLUG" == */* ]] || die "无法从 origin 推断仓库：$REPO_SLUG"
+    # gh 只认 owner/name；非 GitHub 远程（本地路径镜像、其他托管）必须显式给 --repo。
+    [[ "$REPO_SLUG" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] \
+        || die "origin 不是 GitHub 仓库（${remote_url}），请用 --repo owner/name 指定"
 }
 
 # @desc 把缺失条目追加到清单，并同步测试里写死的条目数常量。
@@ -157,8 +159,6 @@ dispatch_and_wait() {
         (( WAIT )) && log_info 'dry-run：跳过等待'
         return 0
     fi
-    command -v gh >/dev/null 2>&1 || die '需要 gh 命令（触发 Actions）'
-    resolve_repo
     log_info "仓库：$REPO_SLUG"
 
     local before=""
@@ -196,6 +196,12 @@ dispatch_and_wait() {
     done
     die "等待运行超时（${WAIT_TIMEOUT}s）：$run_id"
 }
+
+# 触发运行时才需要的前置条件先验：仓库与 gh 不可用时，不要先改清单再失败。
+if (( ! LOCAL_ONLY && ! DRY_RUN )); then
+    command -v gh >/dev/null 2>&1 || die '需要 gh 命令（触发 Actions）'
+    resolve_repo
+fi
 
 add_missing_entries
 commit_and_push

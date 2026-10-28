@@ -134,3 +134,33 @@ def test_check_mode_reports_without_writing(repo: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "python:3.11.9-slim-bookworm"
     assert "python:3.11.9-slim-bookworm" not in _entries(repo)
+
+
+def test_dispatch_requires_github_origin(repo: Path, tmp_path: Path) -> None:
+    """origin 不是 GitHub 仓库时，必须在改清单前失败，并提示用 --repo。"""
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", str(tmp_path / "local.git")],
+        check=True,
+    )
+    before = _entries(repo)
+    # 守卫顺序是「gh 存在 → origin 是 GitHub 仓库」，这里提供假 gh 以便走到 origin 校验。
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "gh").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    (bindir / "gh").chmod(0o700)
+
+    result = subprocess.run(
+        ["bash", str(repo / "scripts" / "ensure-and-sync.sh"), "--wait", "--timeout", "5",
+         "python:3.11.9-slim-bookworm"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env={"PATH": f"{bindir}:/usr/bin:/bin:/usr/sbin:/sbin", "PYTHON": sys.executable},
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "origin 不是 GitHub 仓库" in result.stderr
+    assert "--repo" in result.stderr
+    assert _entries(repo) == before

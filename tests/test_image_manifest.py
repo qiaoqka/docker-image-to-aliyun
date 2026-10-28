@@ -31,6 +31,7 @@ from scripts.image_manifest import (  # noqa: E402  # pyright: ignore[reportMiss
     DEFAULT_PLATFORM,
     Image,
     ImageManifestError,
+    filter_images,
     load_images,
     select_images,
 )
@@ -466,6 +467,28 @@ def test_select_rejects_invalid_requested_reference() -> None:
         select_images([Image("alpine")], ["quay.io/minio/aistor/minio"], DEFAULT_PLATFORM)
 
 
+def test_filter_keeps_all_platforms_of_requested_name() -> None:
+    """只同步某个名字时该名字的全部架构变体都要保留，且按清单顺序输出。"""
+    amd64 = Image("python:3.11.9-slim-bookworm")
+    arm64 = Image("xiaoyaliu/alist", platform="linux/arm64")
+    armv7 = Image("xiaoyaliu/alist", platform="linux/arm/v7")
+    other = Image("nginx:1.25.5")
+    assert filter_images([amd64, arm64, other, armv7], ["xiaoyaliu/alist"]) == [arm64, armv7]
+    assert filter_images([amd64, arm64, other, armv7], ["python:3.11.9-slim-bookworm"]) == [amd64]
+
+
+def test_filter_matches_local_name_and_dedupes_request() -> None:
+    """local 名也能筛选；同一个名字重复请求不会重复输出条目。"""
+    entry = Image("alpine/minio:RELEASE.2025-10-15T17-29-55Z", local="minio/minio:latest")
+    assert filter_images([entry], ["minio/minio:latest", "minio/minio"]) == [entry]
+
+
+def test_filter_errors_for_unknown_name() -> None:
+    """清单里没有的名字必须报错，不能静默返回空集后同步 0 条。"""
+    with pytest.raises(ImageManifestError, match="没有"):
+        filter_images([Image("alpine")], ["nginx:1.25.5"])
+
+
 # --------------------------------------------------------------------------- #
 # CLI 契约
 # --------------------------------------------------------------------------- #
@@ -505,6 +528,23 @@ def test_cli_emits_every_real_manifest_entry() -> None:
         _assert_clean_row(row)
     assert "alpine/minio:RELEASE.2025-10-15T17-29-55Z\tlinux/amd64\talpine_minio:RELEASE.2025-10-15T17-29-55Z\tminio/minio:latest" in rows
     assert "eclipse-temurin:21-jre\tlinux/amd64\teclipse-temurin:21-jre\t-" in rows
+
+
+def test_cli_only_limits_output_to_requested_image() -> None:
+    """--only 只输出命中条目，保留该名字的全部架构行。"""
+    result = _run_cli(REAL_MANIFEST, "--only", "python:3.11.9-slim-bookworm")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        "python:3.11.9-slim-bookworm\tlinux/amd64\tpython:3.11.9-slim-bookworm\t-"
+    ]
+
+
+def test_cli_only_unknown_name_fails_without_rows() -> None:
+    """--only 名字不在清单里时不能输出空结果后当作成功。"""
+    result = _run_cli(REAL_MANIFEST, "--only", "not/in/manifest:1")
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "没有" in result.stderr
 
 
 def test_cli_fails_without_rows_for_invalid_manifest(tmp_path: Path) -> None:

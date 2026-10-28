@@ -142,6 +142,7 @@ def _run_sync(
     registry: str = REGISTRY,
     logout_error: str = "",
     stdin_data: str = "",
+    extra_args: tuple[str, ...] = (),
 ) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
     """执行同步脚本，返回 (进程结果, docker 调用记录)。
 
@@ -192,7 +193,7 @@ def _run_sync(
         "FAKE_DOCKER_POLICY": str(policy_path),
     }
     result = subprocess.run(
-        ["bash", str(scripts / "sync-images.sh"), str(manifest)],
+        ["bash", str(scripts / "sync-images.sh"), str(manifest), *extra_args],
         cwd=repo,
         env=env,
         input=stdin_data,
@@ -242,6 +243,40 @@ def test_digest_differs_runs_full_pipeline_with_registry_prefix(tmp_path: Path) 
     assert tag == ["tag", "alpine:latest", _target("alpine:latest")]
     push = next(call for call in calls if call[0] == "push")
     assert push == ["push", _target("alpine:latest")]
+
+
+def test_only_limits_sync_to_requested_image(tmp_path: Path) -> None:
+    """--only 只处理指定镜像，其余条目连 manifest 查询都不发起。"""
+    manifests = {
+        "alpine:latest": _manifest("sha256:new-alpine"),
+        _target("alpine:latest"): _manifest("sha256:old-alpine"),
+        "python:3.11.9-slim-bookworm": _manifest("sha256:new-python"),
+        _target("python:3.11.9-slim-bookworm"): _manifest("sha256:old-python"),
+    }
+    result, calls = _run_sync(
+        tmp_path,
+        _yaml("source: alpine:latest", "source: python:3.11.9-slim-bookworm"),
+        manifests=manifests,
+        extra_args=("--only", "python:3.11.9-slim-bookworm"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    pulled = [call for call in calls if call[0] == "pull"]
+    assert pulled == [["pull", "--platform", "linux/amd64", "python:3.11.9-slim-bookworm"]]
+    assert not any("alpine:latest" in " ".join(call) for call in calls)
+
+
+def test_only_unknown_name_fails_before_login(tmp_path: Path) -> None:
+    """--only 命中不到时必须解析阶段就失败，不登录也不拉取。"""
+    result, calls = _run_sync(
+        tmp_path,
+        _yaml("source: alpine:latest"),
+        extra_args=("--only", "nginx:1.25.5"),
+    )
+
+    assert result.returncode != 0
+    assert calls == []
+    assert "没有" in result.stderr
 
 
 def test_multiarch_selects_matching_submanifest_digest(tmp_path: Path) -> None:

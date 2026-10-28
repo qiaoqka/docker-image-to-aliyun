@@ -16,10 +16,12 @@
    ``-linux-arm64`` 形式后缀。
 4. ``select_images`` 按 ``source`` 或 ``local`` 匹配请求名，优先精确架构，amd64 可回退到未显式
    指定 platform 的条目。
+5. ``filter_images`` 只保留请求名命中的条目，保留命中名字的全部架构变体，用于「只同步某几个镜像」。
 
 用法示例：
 
     python3 scripts/image_manifest.py images.yaml
+    python3 scripts/image_manifest.py images.yaml --only python:3.11.9-slim-bookworm
 
 CLI 每条镜像输出一行，4 个 TAB 分隔字段：``source``、``effective_platform``、``mirror``、``local``；
 ``local`` 为空时输出 ``-``。诊断信息走 stderr，失败退出码非 0。
@@ -454,6 +456,43 @@ def select_images(images: list[Image], requested: list[str], platform: str) -> l
     return [image for image in images if (image.source, image.platform) in selected]
 
 
+def filter_images(images: list[Image], requested: list[str]) -> list[Image]:
+    """只保留请求名命中的清单条目，用于「只同步某几个镜像」。
+
+    与 ``select_images`` 的区别：这里不做架构选择，命中名字的全部 platform 变体都保留，
+    因此同步 Action 仍会按原顺序处理该镜像的每个架构。
+
+    Args:
+        images: 已加载的清单条目。
+        requested: 请求名，按 ``source`` 或 ``local`` 匹配；缺省 tag 视为 ``latest``。
+
+    Returns:
+        命中的条目，按 ``images`` 原始顺序且按 ``(source, platform)`` 去重。
+
+    Raises:
+        ImageManifestError: 清单内存在冲突、请求名非法，或清单中没有该镜像。
+    """
+    _ensure_no_conflicts(images)
+
+    keep: set[tuple[str, str]] = set()
+    seen_requested: set[str] = set()
+    for name in requested:
+        if not isinstance(name, str) or not name:
+            raise ImageManifestError(f"请求的镜像名必须是非空字符串: {name!r}")
+        resolved = _normalize_reference(name)
+        if resolved in seen_requested:
+            continue
+        seen_requested.add(resolved)
+        candidates = _dedupe_images(
+            image for image in images if image.source == resolved or image.local == resolved
+        )
+        if not candidates:
+            raise ImageManifestError(f"清单中没有镜像: {resolved}")
+        keep.update((image.source, image.platform) for image in candidates)
+
+    return [image for image in images if (image.source, image.platform) in keep]
+
+
 def _format_row(image: Image) -> str:
     """把条目格式化成 4 个 TAB 分隔字段。
 
@@ -487,10 +526,18 @@ def main(argv: list[str] | None = None) -> int:
         description="读取 images.yaml，每条镜像输出 source、effective_platform、mirror、local 四个 TAB 字段。",
     )
     parser.add_argument("manifest", type=Path, help="images.yaml 清单文件路径")
+    parser.add_argument(
+        "--only",
+        nargs="+",
+        metavar="IMAGE",
+        help="只处理这些镜像（source 或 local，不带 tag 按 latest），保留其全部架构条目",
+    )
     args = parser.parse_args(argv)
 
     try:
         images = load_images(args.manifest)
+        if args.only:
+            images = filter_images(images, args.only)
         rows = [_format_row(image) for image in images]
     except ImageManifestError as error:
         print(f"错误: {error}", file=sys.stderr)

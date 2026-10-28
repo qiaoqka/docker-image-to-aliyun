@@ -2,6 +2,11 @@ name: Docker
 
 on:
   workflow_dispatch:
+    inputs:
+      images:
+        description: '只同步这些镜像（空格分隔，source 或 local；留空同步整份清单）'
+        required: false
+        default: ''
   push:
     # 在main分支有新的提交时触发；只监听会影响同步结果的文件
     branches: [ main ]
@@ -75,7 +80,14 @@ jobs:
         .venv/bin/pip install --disable-pip-version-check PyYAML==6.0.3
 
     # 清单解析失败会在登陆阿里云之前退出，不会触发任何 login / pull
+    # workflow_dispatch 的 images 输入按空格拆成 --only 参数；push 触发时为空，处理整份清单
     - name: Sync images to Aliyun
       env:
         PYTHON: "${{ github.workspace }}/.venv/bin/python"
-      run: bash scripts/sync-images.sh images.yaml
+        ONLY_IMAGES: "${{ inputs.images }}"
+      run: |
+        only_args=()
+        for name in $ONLY_IMAGES; do
+          only_args+=(--only "$name")
+        done
+        bash scripts/sync-images.sh images.yaml ${only_args[@]+"${only_args[@]}"}

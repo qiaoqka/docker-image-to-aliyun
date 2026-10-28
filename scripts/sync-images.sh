@@ -5,8 +5,10 @@ set -euo pipefail
 #  串行把 images.yaml 清单中的镜像同步到阿里云容器镜像服务。
 #
 #  用法：
-#      scripts/sync-images.sh [images.yaml 路径]
+#      scripts/sync-images.sh [images.yaml 路径] [--only 镜像名 ...]
 #
+#      --only 按 source 或 local 匹配（不带 tag 按 latest），保留该名字的全部架构条目；
+#      可重复或用空格分隔多个名字，省略时处理整份清单。
 #  环境变量（必需）：
 #      ALIYUN_REGISTRY           阿里云 registry 地址
 #      ALIYUN_NAME_SPACE         阿里云命名空间
@@ -107,8 +109,11 @@ cleanup() {
 trap cleanup EXIT
 
 usage() {
-    printf '用法：%s [images.yaml 路径]\n' "$0"
+    printf '用法：%s [images.yaml 路径] [--only 镜像名 ...]\n' "$0"
     printf '默认清单：%s\n' "$REPO_ROOT/$DEFAULT_MANIFEST_NAME"
+    printf -- '--only 按 source 或 local 匹配（不带 tag 按 latest），保留该名字的全部架构条目；\n'
+    printf -- '       可重复或用空格分隔多个名字，省略时处理整份清单。\n'
+    printf '示例：%s images.yaml --only python:3.11.9-slim-bookworm\n' "$0"
     exit 0
 }
 
@@ -266,14 +271,45 @@ sync_image() {
 load_rows() {
     local module="$1"
     local manifest="$2"
+    shift 2
+    local only_args=()
+    if (( $# > 0 )); then
+        only_args=(--only "$@")
+    fi
 
-    if ! "$PYTHON_BIN" "$module" "$manifest"; then
+    if ! "$PYTHON_BIN" "$module" "$manifest" ${only_args[@]+"${only_args[@]}"}; then
         die "清单解析失败：$manifest"
     fi
 }
 
 main() {
-    local manifest_path="${1:-$REPO_ROOT/$DEFAULT_MANIFEST_NAME}"
+    local manifest_path=""
+    local only=()
+
+    while (( $# > 0 )); do
+        case "$1" in
+            --help|-h)
+                usage
+                ;;
+            --only)
+                shift
+                (( $# > 0 )) || die '--only 需要至少一个镜像名'
+                while (( $# > 0 )) && [[ "$1" != --only ]]; do
+                    only+=("$1")
+                    shift
+                done
+                ;;
+            -*)
+                die "未知参数：$1"
+                ;;
+            *)
+                [[ -z "$manifest_path" ]] || die "只能指定一个清单路径：$1"
+                manifest_path="$1"
+                shift
+                ;;
+        esac
+    done
+    manifest_path="${manifest_path:-$REPO_ROOT/$DEFAULT_MANIFEST_NAME}"
 
     [[ -f "$MANIFEST_MODULE" ]] || die "清单模块不存在：$MANIFEST_MODULE"
     [[ -f "$manifest_path" ]] || die "清单文件不存在：$manifest_path"
@@ -281,8 +317,11 @@ main() {
     command -v jq >/dev/null 2>&1 || die "找不到 jq 命令（digest 检查需要）"
 
     log_info '===== 阶段：解析清单 ====='
+    if (( ${#only[@]} > 0 )); then
+        log_info "只处理请求的镜像：${only[*]}"
+    fi
     local rows_raw
-    rows_raw="$(load_rows "$MANIFEST_MODULE" "$manifest_path")"
+    rows_raw="$(load_rows "$MANIFEST_MODULE" "$manifest_path" ${only[@]+"${only[@]}"})"
 
     # 先把所有 row 读入数组并校验，避免 docker 命令消费循环 stdin
     local rows=()
@@ -377,10 +416,6 @@ main() {
     fi
     return 0
 }
-
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    usage
-fi
 
 PYTHON_BIN="${PYTHON:-$DEFAULT_PYTHON}"
 main "$@"

@@ -49,6 +49,7 @@ images:
     platform: [linux/arm/v7]
   - source: python:3.11-slim-bookworm
     platform: [linux/arm/v7]
+  - source: python:3.11.9-slim-bookworm
   - source: nginx:1.25.5
 
   # node.js

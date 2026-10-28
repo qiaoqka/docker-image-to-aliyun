@@ -37,7 +37,7 @@ from scripts.image_manifest import (  # noqa: E402  # pyright: ignore[reportMiss
 
 MODULE_PATH = REPO_ROOT / "scripts" / "image_manifest.py"
 REAL_MANIFEST = REPO_ROOT / "images.yaml"
-REAL_MANIFEST_ENTRY_COUNT = 40
+REAL_MANIFEST_ENTRY_COUNT = 41
 
 
 def _write_manifest(tmp_path: Path, body: str) -> Path:
